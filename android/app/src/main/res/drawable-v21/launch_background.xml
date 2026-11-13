@@ -1,0 +1,1 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@color/guard_black"/><item android:width="108dp" android:height="108dp" android:gravity="center" android:drawable="@drawable/ic_guard_symbol"/></layer-list>
