@@ -10,6 +10,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import app.walkguard.core.*
 import java.io.Closeable
+import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -57,8 +58,13 @@ class WarningOverlay(private val context: Context) : Closeable {
         if (params.height != view.requiredHeight()) {
             params.height = view.requiredHeight(); manager.updateViewLayout(view, params)
         }
-        if (preview != null) { view.preview?.recycle(); view.preview = preview }
-        if (!settings.preview) { view.preview?.recycle(); view.preview = null }
+        if (!settings.preview || demo) {
+            preview?.recycle()
+            clearPreview()
+        } else if (preview != null) {
+            // The Android render thread can still reference the previous bitmap.
+            view.preview = preview
+        }
         if (needsRedraw) { view.prepareLayer(); view.invalidate() }
         if (shownLevel == RiskLevel.IDLE) animate(1f, settings.revealMs, false)
         shownLevel = event.level
@@ -66,7 +72,7 @@ class WarningOverlay(private val context: Context) : Closeable {
     fun hide() {
         if (shownLevel == RiskLevel.IDLE) return
         shownLevel = RiskLevel.IDLE
-        view.preview?.recycle(); view.preview = null
+        clearPreview()
         animate(0f, 420, true)
     }
     private fun animate(target: Float, duration: Long, remove: Boolean) {
@@ -91,12 +97,19 @@ class WarningOverlay(private val context: Context) : Closeable {
             start()
         }
     }
+    fun clearPreview() {
+        if (view.preview != null) {
+            view.preview = null
+            view.invalidate()
+        }
+    }
+
     private fun detach() {
         if (attached) { runCatching { manager.removeViewImmediate(view) }; attached = false }
     }
     override fun close() {
         revision++; animator?.cancel(); animator = null
-        view.preview?.recycle(); view.preview = null
+        clearPreview()
         shownLevel = RiskLevel.IDLE; detach(); view.releaseLayer()
     }
     private class ArcView(context: Context) : View(context) {
@@ -119,12 +132,12 @@ class WarningOverlay(private val context: Context) : Closeable {
             val w = if (width > 0) width.toFloat() / dp else resources.displayMetrics.widthPixels / dp
             return min(172f * settings.arcSize, min(w * .53f, w * .45f * settings.arcSize) * .88f)
         }
-        fun requiredHeight(): Int = (topInset + (24 + settings.topOffset + 172f * settings.arcSize +
-            24 + (if (settings.showText || demo) 40 else 0) + (if (settings.preview) 124 else 0)) * dp).toInt()
+        fun requiredHeight(): Int = ceil(topInset + (36 + settings.topOffset + 172f * settings.arcSize +
+            (if (settings.showText || demo) 40 else 0)) * dp).toInt()
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             super.onSizeChanged(w, h, oldw, oldh); prepareLayer()
         }
-        fun releaseLayer() { layer?.recycle(); layer = null; layerSettings = null; layerWidth = 0 }
+        fun releaseLayer() { layer = null; layerSettings = null; layerWidth = 0 }
         fun prepareLayer() {
             if (width <= 0 || (layerWidth == width && layerSettings == settings && layer != null)) return
             releaseLayer()
@@ -165,7 +178,8 @@ class WarningOverlay(private val context: Context) : Closeable {
             val intensity = when (event.level) { RiskLevel.CRITICAL -> 1f; RiskLevel.WARNING -> .9f; else -> .7f }
             paint.color = Color.WHITE; paint.alpha = (intensity * 255).toInt(); paint.style = Paint.Style.FILL
             layer?.let { canvas.drawBitmap(it, 0f, top, paint) }
-            var nextY = top + (radiusY() + 24) * dp
+            preview?.let { drawCameraFrame(canvas, it, cx, top) }
+            val nextY = top + (radiusY() + 24) * dp
             if (settings.showText || demo) {
                 val label = if (demo) "DEMO · Смотри вперёд" else event.message
                 paint.typeface = labelFont; paint.textAlign = Paint.Align.CENTER; paint.textSize = 15 * dp
@@ -178,15 +192,26 @@ class WarningOverlay(private val context: Context) : Closeable {
                 canvas.drawRoundRect(textPlate, 8 * dp, 8 * dp, paint)
                 paint.color = Color.rgb(255, 133, 128); paint.alpha = 255
                 canvas.drawText(label, cx, nextY + 16 * dp - (paint.ascent() + paint.descent()) / 2, paint)
-                nextY += 40 * dp
             }
-            preview?.takeUnless { it.isRecycled }?.let {
-                previewRect.set(cx - 56 * dp, nextY, cx + 56 * dp, nextY + 112 * dp)
-                previewClip.reset(); previewClip.addRoundRect(previewRect, 8 * dp, 8 * dp, Path.Direction.CW)
-                val checkpoint = canvas.save(); canvas.clipPath(previewClip)
-                paint.color = Color.WHITE; paint.alpha = 255; paint.isFilterBitmap = true
-                canvas.drawBitmap(it, null, previewRect, paint); canvas.restoreToCount(checkpoint)
-            }
+        }
+
+        private fun drawCameraFrame(canvas: Canvas, bitmap: Bitmap, cx: Float, top: Float) {
+            val radius = radiusY() * dp
+            val scale = min(min(156 * dp, radius * 1.18f) / bitmap.width,
+                min(92 * dp, radius * .61f) / bitmap.height)
+            val halfWidth = bitmap.width * scale / 2
+            val frameTop = top + 8 * dp
+            previewRect.set(cx - halfWidth, frameTop, cx + halfWidth, frameTop + bitmap.height * scale)
+            paint.color = Color.rgb(16, 16, 16)
+            canvas.drawRoundRect(previewRect, 8 * dp, 8 * dp, paint)
+            previewClip.reset()
+            previewClip.addRoundRect(previewRect, 8 * dp, 8 * dp, Path.Direction.CW)
+            val checkpoint = canvas.save()
+            canvas.clipPath(previewClip)
+            paint.color = Color.WHITE
+            paint.isFilterBitmap = true
+            canvas.drawBitmap(bitmap, null, previewRect, paint)
+            canvas.restoreToCount(checkpoint)
         }
     }
 }

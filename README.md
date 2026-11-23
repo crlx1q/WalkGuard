@@ -35,7 +35,7 @@ The visual system takes cues from dot-matrix hardware: a black canvas, restraine
 
 - **Offline detection.** EfficientDet-Lite0 ships inside the APK; no account or network permission.
 - **Explicit camera control.** Start from the app, stop from the app or persistent notification. Locking the screen stops the camera.
-- **A warning above other apps.** Native, non-interactive overlay with optional text, haptics and an in-memory camera preview.
+- **A warning above other apps.** Native overlay with a camera preview enabled by default during warnings. The preview, text and haptics can be turned off in settings.
 - **Your signal.** Dot density, point size, glow, scale, top offset, appearance duration and reduced motion. Contour and dash alternatives are also available.
 - **Real diagnostics.** Actual inference timing, frame rate, camera state and thermal status. Missing measurements stay unavailable.
 - **First-run guidance.** Three introduction screens, separate permission setup and no automatic camera start.
@@ -50,7 +50,7 @@ Physical-device validation of background camera behaviour, overlay placement and
 
 Download `WalkGuard-debug.apk` from [Releases](https://github.com/crlx1q/WalkGuard/releases/latest). Android 8.0 or newer and a rear camera are required. Allow installation from your file manager, install the APK, then follow the permission setup.
 
-The published package is a universal debug build. It is intended for testing and is larger than an optimised, production-signed release. Version 0.3 uses the same development signing certificate as the earlier local builds, so it can update them without clearing settings.
+The published package is a universal debug build. It is intended for testing and is larger than an optimised, production-signed release. Version 0.3.1 uses the same development signing certificate as the earlier builds. The camera preview is enabled on upgrade. You can turn it off again in signal settings.
 
 ## Build
 

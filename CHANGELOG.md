@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 — Camera preview
+
+- Turned on the camera preview for new installs and existing installations on upgrade.
+- Moved the live frame inside the upper warning and show it as soon as the warning starts.
+- Limited the UI to the newest pending camera update and stopped recycling images still visible to Android's renderer.
+
 ## 0.3.0 — Dot matrix
 
 - Rebuilt home, introduction, permissions, settings and appearance screens around quiet typography and a native dot field.

@@ -20,9 +20,11 @@ Android builds one transparent bitmap when width or settings change. Risk update
 
 Flutter uses the same geometric construction for the labelled preview. A RepaintBoundary isolates it from the rest of the UI. Its settings preview is pinned while controls scroll. Page transitions use a short fade and horizontal movement; system reduced motion and the app switch both disable them.
 
+The first frame of a warning appears inside the dot field. The analyzer crops out model padding, preserves the camera aspect ratio and limits subsequent preview updates to two per second. The UI receives at most one pending analysis update, and frames displayed by the overlay are released through Android's normal bitmap lifecycle.
+
 ## Settings compatibility
 
-Existing settings remain intact. The former `SIGNAL` visual maps to `MATRIX`; detector sensitivity, mode and timing do not change during migration. Density and appearance timing have bounded defaults. Restore appearance changes only visual fields.
+Existing settings remain intact. The former `SIGNAL` visual maps to `MATRIX`; detector sensitivity, mode and timing do not change during migration. Density and appearance timing have bounded defaults. Version 0.3.1 enables the camera preview for existing installs once on upgrade. Subsequent changes to that setting persist. Restore appearance changes only visual fields.
 
 ## Validation
 

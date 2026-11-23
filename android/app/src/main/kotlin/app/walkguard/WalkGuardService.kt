@@ -6,6 +6,7 @@ import android.content.*
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
+import android.graphics.Bitmap
 import android.os.*
 import android.provider.Settings
 import android.util.Size
@@ -45,6 +46,22 @@ class WalkGuardService : LifecycleService(), DisplayManager.DisplayListener {
     @Volatile private var thermal = 0
     private var previousRisk = RiskLevel.IDLE
     private var overlaySuppressed = false
+
+    private data class AnalysisUpdate(
+        val token: Int,
+        val event: RiskEvent,
+        val metrics: Map<String, Any?>,
+        val preview: Bitmap?,
+    )
+
+    // Only the newest result waits for the UI thread. A queued frame never outlives the service.
+    private val updatesLock = Any()
+    private var pendingUpdate: AnalysisUpdate? = null
+    private var updatesClosed = false
+    private val deliverUpdate = Runnable {
+        val update = synchronized(updatesLock) { pendingUpdate.also { pendingUpdate = null } }
+        if (update != null) applyAnalysisUpdate(update)
+    }
     private val power by lazy { getSystemService(PowerManager::class.java) }
     private val thermalListener = if (Build.VERSION.SDK_INT >= 29) PowerManager.OnThermalStatusChangedListener { status ->
         thermal = status
@@ -115,26 +132,69 @@ class WalkGuardService : LifecycleService(), DisplayManager.DisplayListener {
                 try {
                     analyzer = CameraAnalyzer(ObjectDetector(this), pose, settings,
                         { if (thermal >= 2) 3 else 10 },
-                        { event, metrics, preview -> main.post {
-                            if (!session.accepts(token)) { preview?.recycle(); return@post }
-                            heartbeat = SystemClock.elapsedRealtime()
-                            runCatching {
-                                if (metrics.isNotEmpty() || previousRisk != event.level) {
-                                    StateHub.update(metrics + event.toMap() + mapOf("engine" to "READY"))
-                                }
-                                previousRisk = event.level
-                                if (overlaySuppressed) preview?.recycle()
-                                else overlay.show(event, settings, preview = preview)
-                                if (settings.alerts && settings.vibration && feedbackGate.shouldSignal(event.level, heartbeat)) vibrate(event.level)
-                            }.onFailure { preview?.takeUnless { it.isRecycled }?.recycle(); fail("Ошибка оверлея: ${it.message}") }
-                        } }, { error -> main.post { if (session.accepts(token)) fail("Ошибка инференса: ${error.message}", true) } })
-                    main.post { if (session.accepts(token)) openCamera(token) }
+                        { event, metrics, preview -> enqueueAnalysisUpdate(token, event, metrics, preview) },
+                        { error -> main.post { if (session.accepts(token)) fail("Ошибка инференса: ${error.message}", true) } })
+                    main.post {
+                        if (session.accepts(token)) {
+                            analyzer?.settings = settings
+                            openCamera(token)
+                        }
+                    }
                 } catch (e: Exception) { main.post { if (session.accepts(token)) fail("Модель не загрузилась: ${e.message}", true) } }
                 catch (e: LinkageError) { main.post { if (session.accepts(token)) fail("Нативный runtime ИИ недоступен: ${e.message}", true) } }
             }
         } catch (e: Exception) { fail("Не удалось запустить сервис: ${e.message}") }
         return START_NOT_STICKY
     }
+    private fun enqueueAnalysisUpdate(
+        token: Int,
+        event: RiskEvent,
+        metrics: Map<String, Any?>,
+        preview: Bitmap?,
+    ) {
+        synchronized(updatesLock) {
+            if (updatesClosed) {
+                preview?.recycle()
+                return
+            }
+            val previous = pendingUpdate
+            val nextPreview = if (event.level == RiskLevel.IDLE) null else preview ?: previous?.preview
+            if (previous?.preview !== nextPreview) previous?.preview?.recycle()
+            pendingUpdate = AnalysisUpdate(token, event,
+                if (metrics.isEmpty()) previous?.metrics.orEmpty() else metrics, nextPreview)
+            if (previous == null) main.post(deliverUpdate)
+        }
+    }
+
+    private fun applyAnalysisUpdate(update: AnalysisUpdate) {
+        if (!session.accepts(update.token)) {
+            update.preview?.recycle()
+            return
+        }
+        heartbeat = SystemClock.elapsedRealtime()
+        val (_, event, metrics, preview) = update
+        if (metrics.isNotEmpty() || previousRisk != event.level) {
+            StateHub.update(metrics + event.toMap() + mapOf("engine" to "READY"))
+        }
+        previousRisk = event.level
+        if (overlaySuppressed) {
+            preview?.recycle()
+        } else {
+            try {
+                overlay.show(event, settings, preview = preview)
+            } catch (error: RuntimeException) {
+                // A failed window attachment may indicate that Android revoked overlay access.
+                fail("Ошибка оверлея: ${error.message}")
+                return
+            }
+        }
+        if (!overlaySuppressed && settings.alerts && settings.vibration &&
+            feedbackGate.shouldSignal(event.level, heartbeat)) {
+            runCatching { vibrate(event.level) }
+                .onFailure { android.util.Log.w("WalkGuard", "Vibration unavailable", it) }
+        }
+    }
+
     @androidx.annotation.OptIn(markerClass = [androidx.camera.camera2.interop.ExperimentalCamera2Interop::class])
     private fun openCamera(token: Int) {
         val future = ProcessCameraProvider.getInstance(this)
@@ -171,14 +231,31 @@ class WalkGuardService : LifecycleService(), DisplayManager.DisplayListener {
     }
     fun applySettings(value: GuardSettings) {
         settings = value; analyzer?.settings = value
+        if (!value.alerts || !value.preview) {
+            clearPendingPreview()
+            overlay.clearPreview()
+        }
         if (!value.alerts) overlay.hide()
         StateHub.update(mapOf("mode" to value.mode))
     }
-    fun hideOverlay() { overlaySuppressed = true; overlay.hide() }
+    fun hideOverlay() {
+        overlaySuppressed = true
+        clearPendingPreview()
+        overlay.close()
+    }
+    private fun clearPendingPreview() {
+        synchronized(updatesLock) {
+            pendingUpdate?.let {
+                it.preview?.recycle()
+                pendingUpdate = it.copy(preview = null)
+            }
+        }
+    }
     fun resumeOverlay() { overlaySuppressed = false }
     private fun fail(message: String, engineError: Boolean = false) {
         if (destroyed || failed) return
         failed = true; errorMessage = message
+        session.stop()
         if (engineError) StateHub.update(mapOf("engine" to "ERROR"))
         StateHub.update(mapOf("error" to message, "message" to message)); stopSelf()
     }
@@ -209,6 +286,11 @@ class WalkGuardService : LifecycleService(), DisplayManager.DisplayListener {
     override fun onDestroy() {
         destroyed = true; session.stop()
         StateHub.update(mapOf("phase" to "STOPPING", "camera" to "CLOSING"))
+        synchronized(updatesLock) {
+            updatesClosed = true
+            pendingUpdate?.preview?.recycle()
+            pendingUpdate = null
+        }
         main.removeCallbacksAndMessages(null)
         runCatching { analysis?.clearAnalyzer() }; runCatching { provider?.unbindAll() }
         analysis = null; provider = null

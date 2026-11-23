@@ -99,7 +99,7 @@ class SettingsScreen extends StatelessWidget {
           ),
           const Divider(),
           const SizedBox(height: 32),
-          const Text('WalkGuard  /  0.3.0', style: technicalStyle),
+          const Text('WalkGuard  /  0.3.1', style: technicalStyle),
         ],
       );
     },
@@ -292,7 +292,7 @@ class AboutScreen extends StatelessWidget {
       ),
       const SectionLabel('Компоненты'),
       const Divider(),
-      const MetricRow('Версия', '0.3.0'),
+      const MetricRow('Версия', '0.3.1'),
       const Divider(),
       const MetricRow('Модель', 'EfficientDet-Lite0 INT8'),
       const Divider(),
@@ -302,7 +302,7 @@ class AboutScreen extends StatelessWidget {
         onPressed: () => showLicensePage(
           context: context,
           applicationName: 'WalkGuard',
-          applicationVersion: '0.3.0',
+          applicationVersion: '0.3.1',
         ),
         child: const Text('Лицензии компонентов'),
       ),

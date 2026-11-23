@@ -7,6 +7,7 @@ import androidx.camera.core.ImageProxy
 import app.walkguard.core.*
 import java.io.Closeable
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 class CameraAnalyzer(
     private val detector: ObjectDetector, private val pose: PoseMonitor,
@@ -30,6 +31,9 @@ class CameraAnalyzer(
     private var totalMs = 0.0
     private var processed = 0L
     private val transform = Matrix()
+    private val previewCadence = PreviewCadence()
+    private val previewSource = Rect()
+    private val previewDestination = Rect()
     override fun analyze(image: ImageProxy) {
         try {
             val now = SystemClock.elapsedRealtime()
@@ -39,6 +43,7 @@ class CameraAnalyzer(
             lastStart = now
             risk.config = config.riskConfig()
             if (!pose.useful) {
+                previewCadence.shouldCapture(now, visible = false)
                 fpsStart = 0; frames = 0; fps = null
                 val event = risk.reset(now, "КАМЕРА НЕ ВИДИТ ДОРОГУ")
                 if (now - lastPublish >= 500) {
@@ -46,6 +51,8 @@ class CameraAnalyzer(
                     onFrame(event, mapOf("pose" to pose.label, "fps" to null, "lastMs" to null,
                         "skipped" to skipped, "resolution" to "${image.width}×${image.height}",
                         "message" to event.message), null)
+                } else {
+                    onFrame(event, emptyMap(), null)
                 }
                 return
             }
@@ -88,7 +95,6 @@ class CameraAnalyzer(
             if (fpsStart == 0L) fpsStart = now
             if (now - fpsStart >= 1000) { fps = frames * 1000.0 / (now - fpsStart); frames = 0; fpsStart = now }
             val event = risk.evaluate(detections, now, pose.useful, pose.stable)
-            // No bitmap crosses the Flutter bridge. Only one optional warning snapshot is copied.
             val publish = now - lastPublish >= 500
             val metrics = if (publish) {
                 lastPublish = now
@@ -99,12 +105,25 @@ class CameraAnalyzer(
                     "detections" to detections.map { mapOf("label" to it.label, "confidence" to it.confidence.toDouble(),
                         "box" to listOf(it.box.left, it.box.top, it.box.right, it.box.bottom).map(Float::toDouble), "timestamp" to it.timestamp) })
             } else emptyMap()
-            val preview = if (publish && config.alerts && config.preview && event.level != RiskLevel.IDLE)
-                square.copy(Bitmap.Config.ARGB_8888, false) else null
+            val preview = if (previewCadence.shouldCapture(
+                    now, config.alerts && config.preview && event.level != RiskLevel.IDLE,
+                )) makePreview(padX, padY) else null
             onFrame(event, metrics, preview)
         } catch (e: Exception) { onError(e) }
         catch (e: LinkageError) { onError(e) }
         finally { image.close() }
     }
+    private fun makePreview(padX: Float, padY: Float): Bitmap {
+        previewSource.set(padX.roundToInt(), padY.roundToInt(),
+            (320 - padX).roundToInt(), (320 - padY).roundToInt())
+        val scale = 192f / maxOf(previewSource.width(), previewSource.height())
+        val width = (previewSource.width() * scale).roundToInt().coerceAtLeast(1)
+        val height = (previewSource.height() * scale).roundToInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        previewDestination.set(0, 0, width, height)
+        Canvas(bitmap).drawBitmap(square, previewSource, previewDestination, paint)
+        return bitmap
+    }
+
     override fun close() { detector.close(); rgba?.recycle(); square.recycle() }
 }

@@ -204,9 +204,9 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
                       const Divider(),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Мини-превью камеры'),
+                        title: const Text('Кадр с камеры'),
                         subtitle: const Text(
-                          'Только при предупреждении, без записи',
+                          'Внутри полукруга при предупреждении',
                           style: TextStyle(
                             fontSize: 12,
                             color: GuardColors.muted,
@@ -237,7 +237,7 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
                               'glow': .7,
                               'showText': true,
                               'reduceMotion': false,
-                              'preview': false,
+                              'preview': const GuardSettings().preview,
                               'dotDensity': 1,
                               'revealMs': 650,
                             }),
